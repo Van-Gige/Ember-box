@@ -1,0 +1,184 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>FM-1 link test</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  box-sizing:border-box;
+  padding-top:env(safe-area-inset-top,0px);
+  padding-bottom:env(safe-area-inset-bottom,0px);
+  color-scheme:light;
+  --bg:#e6dcc3; --panel:#f1e8d2; --text:#17253c; --muted:#5b687e;
+  --amber:#c47410; --ember:#c04a18; --ok:#2f7a3a; --line:rgba(23,37,60,.16); --on-amber:#fff7e6;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    color-scheme:dark;
+    --bg:#13213a; --panel:#1a2c4a; --text:#f0e5cd; --muted:#93a1ba;
+    --amber:#f4a63a; --ember:#ee6a2c; --ok:#7fd08a; --line:rgba(240,229,205,.13); --on-amber:#13213a;
+  }
+}
+:root[data-theme="dark"]{
+  color-scheme:dark;
+  --bg:#13213a; --panel:#1a2c4a; --text:#f0e5cd; --muted:#93a1ba;
+  --amber:#f4a63a; --ember:#ee6a2c; --ok:#7fd08a; --line:rgba(240,229,205,.13); --on-amber:#13213a;
+}
+*{box-sizing:border-box}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+body{margin:0;background:var(--bg);color:var(--text);
+  font-family:"Barlow Condensed","Arial Narrow",Arial,sans-serif;font-size:19px;line-height:1.35}
+main{max-width:720px;margin:0 auto;padding:20px 18px 40px}
+h1{font-size:40px;font-weight:700;margin:4px 0 2px;letter-spacing:.01em}
+.sub{color:var(--muted);margin:0 0 18px}
+.step{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:14px 16px;margin:0 0 12px}
+.step h2{font-size:24px;margin:0 0 8px;font-weight:600}
+.step.off{opacity:.45;pointer-events:none}
+button{font:inherit;font-weight:600;font-size:20px;border:0;border-radius:10px;padding:12px 18px;margin:4px 6px 4px 0;
+  background:var(--amber);color:var(--on-amber);min-height:48px;cursor:pointer}
+button.ghost{background:transparent;color:var(--text);border:1px solid var(--line)}
+button:focus-visible,select:focus-visible{outline:3px solid var(--ember);outline-offset:2px}
+select{font:inherit;font-size:19px;padding:8px 10px;border-radius:8px;border:1px solid var(--line);background:var(--bg);color:var(--text);min-height:44px}
+.status{font-weight:600}
+.status.good{color:var(--ok)} .status.bad{color:var(--ember)}
+.ports{margin:6px 0 0;padding-left:20px;color:var(--muted)}
+.ports b{color:var(--text)}
+.log{font-size:16px;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:8px 10px;height:170px;overflow:auto;white-space:pre-wrap}
+.clock{font-size:17px;color:var(--muted);margin:6px 0}
+.result{border:2px solid var(--amber)}
+.result pre{font-size:15px;white-space:pre-wrap;margin:6px 0 0;color:var(--muted)}
+</style>
+</head>
+<body>
+<main>
+  <h1>FM-1 link test</h1>
+  <p class="sub">Checks whether a page in Chrome on the tablet can talk to the FM-1 over USB. Plug the FM-1 in first.</p>
+
+  <section class="step" id="s1">
+    <h2>1. Connect</h2>
+    <button id="connect">Connect to MIDI</button>
+    <div class="status" id="status">Not connected yet.</div>
+    <ul class="ports" id="ports"></ul>
+  </section>
+
+  <section class="step off" id="s2">
+    <h2>2. Send to the FM-1</h2>
+    <label>Output <select id="out"></select></label>
+    <label>Track <select id="ch"></select></label>
+    <div>
+      <button id="note">Play a chord</button>
+      <button id="sweep" class="ghost">Sweep brightness (CC74)</button>
+      <button id="clock" class="ghost">Send 2 bars of clock at 120</button>
+    </div>
+    <div class="clock" id="sendInfo">Expect the chord on the chosen track. For the clock test, set MENU › MIDI › CLOCK to USB on the FM-1 first.</div>
+  </section>
+
+  <section class="step off" id="s3">
+    <h2>3. Listen to the FM-1</h2>
+    <p class="clock">Press play on the FM-1 or play its keys. Notes and controls appear here; clock is counted.</p>
+    <div class="clock" id="clockInfo">Clock ticks: 0 · Tempo: –</div>
+    <div class="log" id="log"></div>
+  </section>
+
+  <section class="step result" id="s4">
+    <h2>Result to send back</h2>
+    <button id="copy" class="ghost">Copy result</button>
+    <pre id="result">Tap Connect first.</pre>
+  </section>
+</main>
+<script>
+const $=s=>document.querySelector(s);
+let access=null, outPort=null, ticks=0, lastTick=0, bpmSm=0, notesIn=0, ccIn=0, sent=[];
+const env={secure:window.isSecureContext, framed:(()=>{try{return window.self!==window.top}catch(e){return true}})(),
+  hasApi:!!navigator.requestMIDIAccess, ua:navigator.userAgent};
+let errorText='';
+
+for(let i=1;i<=16;i++){const o=document.createElement('option');o.value=i;o.textContent='T'+i+' (channel '+i+')';if(i>6)o.textContent='Channel '+i;$('#ch').appendChild(o);}
+
+function setStatus(t,cls){const s=$('#status');s.textContent=t;s.className='status '+(cls||'');}
+function log(t){const l=$('#log');l.textContent=(t+'\n'+l.textContent).slice(0,4000);}
+function result(){
+  const ins=access?[...access.inputs.values()].map(p=>p.name):[];
+  const outs=access?[...access.outputs.values()].map(p=>p.name):[];
+  $('#result').textContent=[
+    'Web MIDI available: '+(env.hasApi?'yes':'no'),
+    'Secure page: '+(env.secure?'yes':'no'),
+    'Inside a frame: '+(env.framed?'yes':'no'),
+    'Access: '+(access?'granted':(errorText||'not tried')),
+    'Inputs: '+(ins.join(', ')||'none'),
+    'Outputs: '+(outs.join(', ')||'none'),
+    'Sent: '+(sent.join(', ')||'nothing yet'),
+    'Received: '+notesIn+' notes, '+ccIn+' controls, '+ticks+' clock ticks'+(bpmSm?' (~'+Math.round(bpmSm)+' BPM)':''),
+    'Browser: '+env.ua
+  ].join('\n');
+}
+function listPorts(){
+  const ul=$('#ports');ul.innerHTML='';const sel=$('#out');const prev=sel.value;sel.innerHTML='';
+  let fm=null;
+  for(const p of access.outputs.values()){
+    const o=document.createElement('option');o.value=p.id;o.textContent=p.name;sel.appendChild(o);
+    if(/felucca|fm-?1/i.test(p.name)) fm=p.id;
+  }
+  for(const p of access.inputs.values()){const li=document.createElement('li');li.innerHTML='In: <b></b>';li.querySelector('b').textContent=p.name;ul.appendChild(li);p.onmidimessage=onMsg;}
+  for(const p of access.outputs.values()){const li=document.createElement('li');li.innerHTML='Out: <b></b>';li.querySelector('b').textContent=p.name;ul.appendChild(li);}
+  if(prev&&[...sel.options].some(o=>o.value===prev)) sel.value=prev; else if(fm) sel.value=fm;
+  outPort=sel.value?access.outputs.get(sel.value):null;
+  const found=[...access.outputs.values()].some(p=>/felucca|fm-?1/i.test(p.name));
+  if(!access.outputs.size&&!access.inputs.size) setStatus('Connected to MIDI, but no devices. Check the USB cable carries data, then replug.','bad');
+  else setStatus(found?'FM-1 found.':'Connected. No port named Felucca: pick the FM-1 from the list.',found?'good':'');
+  $('#s2').classList.toggle('off',!outPort); $('#s3').classList.remove('off');
+  result();
+}
+function onMsg(e){
+  const d=e.data, st=d[0]&0xf0, ch=(d[0]&0x0f)+1;
+  if(d[0]===0xF8){ticks++; const now=e.timeStamp; if(lastTick){const bpm=60000/((now-lastTick)*24); if(bpm>20&&bpm<400) bpmSm=bpmSm?bpmSm*0.9+bpm*0.1:bpm;} lastTick=now;
+    if(ticks%24===0){$('#clockInfo').textContent='Clock ticks: '+ticks+' · Tempo: ~'+Math.round(bpmSm)+' BPM'; result();} return;}
+  if(d[0]===0xFA){log('Start');return;} if(d[0]===0xFC){log('Stop');return;} if(d[0]===0xFB){log('Continue');return;}
+  if(st===0x90&&d[2]>0){notesIn++;log('T'+ch+' note '+d[1]+' vel '+d[2]);}
+  else if(st===0xB0){ccIn++;log('T'+ch+' CC'+d[1]+' = '+d[2]);}
+  else if(st===0xC0){log('T'+ch+' program '+d[1]);}
+  result();
+}
+$('#connect').onclick=async()=>{
+  if(!env.hasApi){errorText='this browser has no Web MIDI';setStatus('This browser has no Web MIDI. Use Chrome on the tablet.','bad');result();return;}
+  setStatus('Asking for MIDI access. Allow it in the prompt.');
+  try{
+    access=await navigator.requestMIDIAccess({sysex:false});
+    access.onstatechange=()=>listPorts();
+    listPorts();
+  }catch(e){
+    errorText=(e&&e.name?e.name+': ':'')+(e&&e.message||e);
+    setStatus('MIDI access refused: '+errorText,'bad'); result();
+  }
+};
+$('#out').onchange=()=>{outPort=access.outputs.get($('#out').value);result();};
+function ch(){return (+$('#ch').value-1)&15;}
+$('#note').onclick=()=>{
+  if(!outPort) return; const c=ch(), t=performance.now(), notes=[60,64,67];
+  notes.forEach(n=>outPort.send([0x90|c,n,100],t));
+  notes.forEach(n=>outPort.send([0x80|c,n,0],t+600));
+  sent.push('chord on ch'+(c+1)); result();
+};
+$('#sweep').onclick=()=>{
+  if(!outPort) return; const c=ch(), t=performance.now();
+  outPort.send([0x90|c,48,100],t);
+  for(let i=0;i<=40;i++){const v=i<=20?Math.round(i*127/20):Math.round((40-i)*127/20); outPort.send([0xB0|c,74,v],t+i*50);}
+  outPort.send([0x80|c,48,0],t+2050);
+  sent.push('CC74 sweep on ch'+(c+1)); result();
+};
+$('#clock').onclick=()=>{
+  if(!outPort) return; const t=performance.now()+50, tick=60000/120/24;
+  outPort.send([0xFA],t);
+  for(let i=0;i<24*8;i++) outPort.send([0xF8],t+i*tick);
+  outPort.send([0xFC],t+24*8*tick);
+  sent.push('2 bars clock + start/stop'); result();
+};
+$('#copy').onclick=async()=>{try{await navigator.clipboard.writeText($('#result').textContent);$('#copy').textContent='Copied';}catch(e){$('#copy').textContent='Select the text below instead';}};
+result();
+</script>
+</body>
+</html>
