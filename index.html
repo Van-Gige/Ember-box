@@ -84,6 +84,23 @@ select{font:inherit;font-size:19px;padding:8px 10px;border-radius:8px;border:1px
     <div class="log" id="log"></div>
   </section>
 
+  <section class="step" id="s5">
+    <h2>4. Read the FM-1's sound list</h2>
+    <p class="clock">Asks the FM-1 for its engines and preset names. This only reads; nothing on the FM-1 changes. Chrome asks a second permission for this.</p>
+    <button id="sx">Read sound list</button>
+    <div class="status" id="sxStatus"></div>
+    <div class="log" id="sxLog" style="height:200px"></div>
+  </section>
+
+  <section class="step" id="s6">
+    <h2>5. Hear the FM-1's audio in the tablet</h2>
+    <p class="clock">Looks for the FM-1's USB audio. Turn the FM-1's volume down first, then play something on it.</p>
+    <button id="au">Find FM-1 audio</button>
+    <button id="mon" class="ghost" disabled>Play it through the tablet</button>
+    <div class="status" id="auStatus"></div>
+    <div style="height:14px;border-radius:7px;background:var(--line);overflow:hidden;margin-top:8px"><div id="meter" style="height:100%;width:0;background:var(--amber)"></div></div>
+  </section>
+
   <section class="step result" id="s4">
     <h2>Result to send back</h2>
     <button id="copy" class="ghost">Copy result</button>
@@ -113,6 +130,8 @@ function result(){
     'Outputs: '+(outs.join(', ')||'none'),
     'Sent: '+(sent.join(', ')||'nothing yet'),
     'Received: '+notesIn+' notes, '+ccIn+' controls, '+ticks+' clock ticks'+(bpmSm?' (~'+Math.round(bpmSm)+' BPM)':''),
+    'Sound list: '+(typeof sx!=='undefined'?sx.state+(sx.version?' (firmware '+sx.version+')':''):'not tried'),
+    'Audio in: '+(typeof au!=='undefined'?au.state+(au.inputs.length?' · inputs: '+au.inputs.join(', '):''):'not tried'),
     'Browser: '+env.ua
   ].join('\n');
 }
@@ -121,13 +140,13 @@ function listPorts(){
   let fm=null;
   for(const p of access.outputs.values()){
     const o=document.createElement('option');o.value=p.id;o.textContent=p.name;sel.appendChild(o);
-    if(/felucca|fm-?1/i.test(p.name)) fm=p.id;
+    if(/felucca/i.test(p.name)) fm=p.id;
   }
   for(const p of access.inputs.values()){const li=document.createElement('li');li.innerHTML='In: <b></b>';li.querySelector('b').textContent=p.name;ul.appendChild(li);p.onmidimessage=onMsg;}
   for(const p of access.outputs.values()){const li=document.createElement('li');li.innerHTML='Out: <b></b>';li.querySelector('b').textContent=p.name;ul.appendChild(li);}
   if(prev&&[...sel.options].some(o=>o.value===prev)) sel.value=prev; else if(fm) sel.value=fm;
   outPort=sel.value?access.outputs.get(sel.value):null;
-  const found=[...access.outputs.values()].some(p=>/felucca|fm-?1/i.test(p.name));
+  const found=[...access.outputs.values()].some(p=>/felucca/i.test(p.name));
   if(!access.outputs.size&&!access.inputs.size) setStatus('Connected to MIDI, but no devices. Check the USB cable carries data, then replug.','bad');
   else setStatus(found?'FM-1 found.':'Connected. No port named Felucca: pick the FM-1 from the list.',found?'good':'');
   $('#s2').classList.toggle('off',!outPort); $('#s3').classList.remove('off');
@@ -135,6 +154,7 @@ function listPorts(){
 }
 function onMsg(e){
   const d=e.data, st=d[0]&0xf0, ch=(d[0]&0x0f)+1;
+  if(d[0]===0xF0){onSysex(d);return;}
   if(d[0]===0xF8){ticks++; const now=e.timeStamp; if(lastTick){const bpm=60000/((now-lastTick)*24); if(bpm>20&&bpm<400) bpmSm=bpmSm?bpmSm*0.9+bpm*0.1:bpm;} lastTick=now;
     if(ticks%24===0){$('#clockInfo').textContent='Clock ticks: '+ticks+' · Tempo: ~'+Math.round(bpmSm)+' BPM'; result();} return;}
   if(d[0]===0xFA){log('Start');return;} if(d[0]===0xFC){log('Stop');return;} if(d[0]===0xFB){log('Continue');return;}
@@ -177,6 +197,83 @@ $('#clock').onclick=()=>{
   outPort.send([0xFC],t+24*8*tick);
   sent.push('2 bars clock + start/stop'); result();
 };
+/* ---- 4. sound list over SysEx (read-only: INFO and NAMES) ---- */
+let sx={state:'not tried', version:'', engines:[], presets:0, waiting:null};
+const HDR=[0xF0,0x7D,0x46,0x4C];
+function sxLog(t){$('#sxLog').textContent+=t+'\n';}
+function readStr(d,i){let s='';while(i<d.length&&d[i]!==0&&d[i]!==0xF7){s+=String.fromCharCode(d[i]);i++;}return [s,i+1];}
+function sxSend(bytes){
+  const p=[...access.outputs.values()].find(o=>/felucca/i.test(o.name));
+  if(!p) throw new Error('no Felucca output');
+  return new Promise((res,rej)=>{
+    sx.waiting={cmd:bytes[0],res};
+    p.send([...HDR,...bytes,0xF7]);
+    setTimeout(()=>{if(sx.waiting&&sx.waiting.cmd===bytes[0]){sx.waiting=null;rej(new Error('no reply to command '+bytes[0]));}},1500);
+  });
+}
+function onSysex(d){
+  if(d[1]!==0x7D||d[2]!==0x46||d[3]!==0x4C) return;
+  if(sx.waiting&&d[4]===sx.waiting.cmd){const w=sx.waiting;sx.waiting=null;w.res(d);}
+}
+$('#sx').onclick=async()=>{
+  $('#sxLog').textContent='';
+  try{
+    $('#sxStatus').textContent='Asking for permission to read the FM-1. Allow it in the prompt.';
+    access=await navigator.requestMIDIAccess({sysex:true});
+    access.onstatechange=()=>listPorts(); listPorts();
+  }catch(e){sx.state='refused: '+(e.name||'')+' '+(e.message||e);$('#sxStatus').textContent='Permission refused: '+sx.state;$('#sxStatus').className='status bad';result();return;}
+  try{
+    const d=await sxSend([1]);
+    let i=5,s;[s,i]=readStr(d,i); sx.version=s;
+    const nEng=d[i++]; i+=4; // P_COUNT, G_COUNT, NSTEP, P_E0
+    sx.engines=[];
+    for(let k=0;k<nEng;k++){[s,i]=readStr(d,i);sx.engines.push({name:s,presets:[]});}
+    sxLog('Firmware: '+sx.version+' · '+nEng+' engines');
+    sx.presets=0;
+    for(let k=0;k<nEng;k++){
+      try{
+        const r=await sxSend([10,k]); let j=6; const n=r[j++]; const names=[];
+        for(let m=0;m<n;m++){[s,j]=readStr(r,j);names.push(s);}
+        sx.engines[k].presets=names; sx.presets+=n;
+        sxLog(sx.engines[k].name+' ('+n+'): '+names.slice(0,6).join(', ')+(n>6?' …':''));
+      }catch(e){sxLog(sx.engines[k].name+': no reply');}
+    }
+    sx.state='read '+sx.presets+' presets';
+    $('#sxStatus').textContent='Read '+sx.presets+' presets from '+nEng+' engines.';$('#sxStatus').className='status good';
+  }catch(e){sx.state='failed: '+e.message;$('#sxStatus').textContent='Reading failed: '+e.message;$('#sxStatus').className='status bad';}
+  result();
+};
+
+/* ---- 5. FM-1 USB audio into the tablet ---- */
+let au={state:'not tried', inputs:[], ctx:null, src:null, mon:false};
+$('#au').onclick=async()=>{
+  try{
+    $('#auStatus').textContent='Asking for audio permission. Allow it in the prompt.';
+    let st=await navigator.mediaDevices.getUserMedia({audio:true});
+    st.getTracks().forEach(t=>t.stop());
+    const devs=(await navigator.mediaDevices.enumerateDevices()).filter(x=>x.kind==='audioinput');
+    au.inputs=devs.map(x=>x.label||'(no name)');
+    const fm=devs.find(x=>/felucca|usb/i.test(x.label));
+    if(!fm){au.state='FM-1 audio not listed';$('#auStatus').textContent='The FM-1 isn’t listed as an audio input. Inputs seen: '+(au.inputs.join(', ')||'none');$('#auStatus').className='status bad';result();return;}
+    st=await navigator.mediaDevices.getUserMedia({audio:{deviceId:{exact:fm.deviceId},echoCancellation:false,noiseSuppression:false,autoGainControl:false}});
+    au.ctx=new (window.AudioContext||window.webkitAudioContext)();
+    au.src=au.ctx.createMediaStreamSource(st);
+    const an=au.ctx.createAnalyser(); an.fftSize=1024; au.src.connect(an);
+    const buf=new Float32Array(an.fftSize); let peak=0;
+    (function tick(){an.getFloatTimeDomainData(buf);let m=0;for(const v of buf)m=Math.max(m,Math.abs(v));peak=Math.max(peak,m);
+      $('#meter').style.width=Math.min(100,m*140)+'%'; au.peak=peak; requestAnimationFrame(tick);})();
+    setInterval(()=>{au.state='listening on "'+fm.label+'", loudest '+Math.round((au.peak||0)*100)+'%';result();},1000);
+    $('#auStatus').textContent='Listening to: '+fm.label+'. Play the FM-1 and watch the bar.';$('#auStatus').className='status good';
+    $('#mon').disabled=false;
+  }catch(e){au.state='failed: '+(e.name||'')+' '+(e.message||e);$('#auStatus').textContent='Audio failed: '+au.state;$('#auStatus').className='status bad';}
+  result();
+};
+$('#mon').onclick=()=>{
+  if(!au.src) return; au.mon=!au.mon;
+  if(au.mon){au.src.connect(au.ctx.destination);$('#mon').textContent='Stop playing it through';}
+  else{try{au.src.disconnect(au.ctx.destination);}catch(e){}$('#mon').textContent='Play it through the tablet';}
+};
+
 $('#copy').onclick=async()=>{try{await navigator.clipboard.writeText($('#result').textContent);$('#copy').textContent='Copied';}catch(e){$('#copy').textContent='Select the text below instead';}};
 result();
 </script>
