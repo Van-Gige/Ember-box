@@ -94,7 +94,8 @@ select{font:inherit;font-size:19px;padding:8px 10px;border-radius:8px;border:1px
 
   <section class="step" id="s6">
     <h2>5. Hear the FM-1's audio in the tablet</h2>
-    <p class="clock">Looks for the FM-1's USB audio. Turn the FM-1's volume down first, then play something on it.</p>
+    <p class="clock">Looks for the FM-1's USB audio. On Android it may hide behind “Default”: set the FM-1’s MENU › AUDIO › USB LEVEL to FIXED and turn its MASTER knob down, so the bar can only move if the sound arrives over USB.</p>
+    <p class="clock" style="display:none">Input <select id="auIn"></select></p>
     <button id="au">Find FM-1 audio</button>
     <button id="mon" class="ghost" disabled>Play it through the tablet</button>
     <div class="status" id="auStatus"></div>
@@ -253,8 +254,14 @@ $('#au').onclick=async()=>{
     st.getTracks().forEach(t=>t.stop());
     const devs=(await navigator.mediaDevices.enumerateDevices()).filter(x=>x.kind==='audioinput');
     au.inputs=devs.map(x=>x.label||'(no name)');
-    const fm=devs.find(x=>/felucca|usb/i.test(x.label));
-    if(!fm){au.state='FM-1 audio not listed';$('#auStatus').textContent='The FM-1 isn’t listed as an audio input. Inputs seen: '+(au.inputs.join(', ')||'none');$('#auStatus').className='status bad';result();return;}
+    const sel=$('#auIn'); const prev=sel.value; sel.innerHTML='';
+    devs.forEach(x=>{const o=document.createElement('option');o.value=x.deviceId;o.textContent=x.label||'(no name)';sel.appendChild(o);});
+    sel.parentElement.style.display='';
+    const named=devs.find(x=>/felucca|usb/i.test(x.label));
+    if(prev&&devs.some(x=>x.deviceId===prev)) sel.value=prev;
+    else sel.value=(named||devs.find(x=>/default/i.test(x.label))||devs[0]).deviceId;
+    const fm=devs.find(x=>x.deviceId===sel.value);
+    if(au.ctx){try{au.ctx.close();}catch(e){} au.ctx=null; au.src=null; au.mon=false; $('#mon').textContent='Play it through the tablet'; clearInterval(au.timer);}
     st=await navigator.mediaDevices.getUserMedia({audio:{deviceId:{exact:fm.deviceId},echoCancellation:false,noiseSuppression:false,autoGainControl:false}});
     au.ctx=new (window.AudioContext||window.webkitAudioContext)();
     au.src=au.ctx.createMediaStreamSource(st);
@@ -262,12 +269,13 @@ $('#au').onclick=async()=>{
     const buf=new Float32Array(an.fftSize); let peak=0;
     (function tick(){an.getFloatTimeDomainData(buf);let m=0;for(const v of buf)m=Math.max(m,Math.abs(v));peak=Math.max(peak,m);
       $('#meter').style.width=Math.min(100,m*140)+'%'; au.peak=peak; requestAnimationFrame(tick);})();
-    setInterval(()=>{au.state='listening on "'+fm.label+'", loudest '+Math.round((au.peak||0)*100)+'%';result();},1000);
+    au.peak=0; au.timer=setInterval(()=>{au.state='listening on "'+fm.label+'", loudest '+Math.round((au.peak||0)*100)+'%';result();},1000);
     $('#auStatus').textContent='Listening to: '+fm.label+'. Play the FM-1 and watch the bar.';$('#auStatus').className='status good';
     $('#mon').disabled=false;
   }catch(e){au.state='failed: '+(e.name||'')+' '+(e.message||e);$('#auStatus').textContent='Audio failed: '+au.state;$('#auStatus').className='status bad';}
   result();
 };
+$('#auIn').onchange=()=>$('#au').click();
 $('#mon').onclick=()=>{
   if(!au.src) return; au.mon=!au.mon;
   if(au.mon){au.src.connect(au.ctx.destination);$('#mon').textContent='Stop playing it through';}
