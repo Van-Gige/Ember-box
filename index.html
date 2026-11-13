@@ -898,6 +898,7 @@ function setDJ(x){
   A.lp.frequency.setTargetAtTime(lpF,now,.02); A.hp.frequency.setTargetAtTime(hpF,now,.02);
   A.lp.Q.setTargetAtTime(x<0?q:.7,now,.02); A.hp.Q.setTargetAtTime(x>0?q:.7,now,.02);
   const k=$('#xfk'); if(k) k.style.left=(50+x*46)+'%';
+  fm1Filter(x);
 }
 function tapeStop(on){
   if(!ctx) return;
@@ -1186,7 +1187,7 @@ function toast(msg){const t=$('#toast');t.textContent=msg;t.classList.add('show'
 
 /* ================= rendering ================= */
 function subLabel(t){
-  if(t.src==='fm1'&&t.type!=='break') return fm1Label(t);
+  if(t.src==='fm1') return fm1Label(t);
   if(t.type==='fm') return t.preset;
   if(t.type==='break'){const p=t.slot>=0?curPat(t,t.slot):curPat(t,t.editSlot);return (BREAKS[p.brk]||BREAKS.amen).name+', '+VARS[p.v].name.toLowerCase();}
   return 'Kit tune '+(t.kit.tune>0?'+':'')+t.kit.tune;
@@ -1584,7 +1585,7 @@ function gfxSVG(k,t){
   return '';
 }
 function soundHTML(){
-  if(S.tracks[S.focus].src==='fm1'&&S.tracks[S.focus].type!=='break') return fm1SoundHTML();
+  if(S.tracks[S.focus].src==='fm1') return fm1SoundHTML();
   const t=S.tracks[S.focus], pages=soundPages(t), pg=pages[pageIndex(pages)];
   const tabs=pages.map(p=>`<button class="stab${p.k===pg.k?' on':''}" data-a="spage" data-k="${p.k}">${p.name}</button>`).join('');
   let body, knobs='';
@@ -1608,7 +1609,7 @@ function movePresetSel(d){
   const el=document.querySelector(`.pcard[data-k="${R.presetSel}"]`); if(el) el.scrollIntoView({block:'nearest'});
 }
 function soundPad(cur,pr,now,holdR){
-  if(S.tracks[S.focus].src==='fm1'&&S.tracks[S.focus].type!=='break'){fm1SoundPad(cur,pr,now,holdR);return;}
+  if(S.tracks[S.focus].src==='fm1'){fm1SoundPad(cur,pr,now,holdR);return;}
   const F=S.focus,t=S.tracks[F],pages=soundPages(t),pi=pageIndex(pages),pg=pages[pi];
   if(holdR){
     if(pr('LEFT')||pr('RIGHT')){const n=(pi+(cur.RIGHT?1:pages.length-1))%pages.length;R.spage=pages[n].k;R.knob=0;renderMain();toast(pages[n].name);}
@@ -1996,6 +1997,7 @@ document.addEventListener('click',e=>{
     case 'lcard':{const k=+b.dataset.k;if(k===RUN.ln.sel) learnKeep(); else learnSel(k);break;}
     case 'lkeep':learnKeep();break;
     case 'lroll':learnReroll();break;
+    case 'lsnd':learnSound();break;
     case 'lscene':learnScenePlay(+b.dataset.k);break;
     case 'lskip':learnSkip();break;
     case 'lquick':runFinish('perform');openQuick(false);break;
@@ -2010,7 +2012,6 @@ document.addEventListener('click',e=>{
     case 'qsndok':qbSoundDone();break;
     case 'qsndroll':qbRerollSounds();break;
     case 'qforge':qbForge();break;
-    case 'qsrc':qbSetSrc(b.dataset.m);break;
     case 'pkcard':{const k=+b.dataset.k;if(k===RUN.pk.sel) pkUse(); else pkSelect(k);break;}
     case 'pkuse':pkUse();break;
     case 'pkroll':pkReroll();break;
@@ -2484,7 +2485,7 @@ function buildRunProject(cls){
     scenes:[[0,-1,-1,-1,-1,-1],[0,-1,-1,-1,-1,-1],[0,-1,-1,-1,-1,-1],[0,-1,-1,-1,-1,-1]]});
   S.tracks.forEach((t,i)=>{t.slot=i===0?0:-1;t.editSlot=0;});
   R.pending=[{},{},{},{},{},{}]; R.pendingScene=null; R.lastScene=-1;
-  for(let i=0;i<6;i++) updateBus(i); updateEcho(); syncHeader(); saveSoon();
+  for(let i=0;i<6;i++) updateBus(i); updateEcho(); syncHeader(); fm1AllTracks(); saveSoon();
 }
 function runSelect(i){RUN.sel=(i+RUN.cards.length)%RUN.cards.length;document.querySelectorAll('.rcard').forEach(el=>el.classList.toggle('sel',+el.dataset.k===RUN.sel));
   const b=$('#runpick'); if(b) b.textContent='Choose '+RUN.cards[RUN.sel].title;
@@ -2926,7 +2927,6 @@ function runPad(now){
   if((st==='qsound'||st==='pick')&&pr('ZR')){R.duck=R.duck<1?1:.4;refreshMix();return;}
   if(st==='qsound'){const n=RUN.qb.sounds.length;
     if(pr('LEFT')){qbApplySound((RUN.qb.ssel+n-1)%n);renderRun();} if(pr('RIGHT')){qbApplySound((RUN.qb.ssel+1)%n);renderRun();}
-    if((pr('UP')||pr('DOWN'))&&fm1Ready()&&FM1_ROLE[RUN.qb.i]){qbSrcStep(cur.DOWN?1:-1);return;}
     if(pr('A')) qbSoundDone(); else if(pr('Y')) qbRerollSounds(); else if(pr('X')) qbForge(); return;}
   if(st==='pick'){const P=RUN.pk;
     if(pr('LEFT')) pkSelect(P.sel-1); if(pr('RIGHT')) pkSelect(P.sel+1);
@@ -3208,7 +3208,7 @@ function buildQuickProject(g){
   R.pending=[{},{},{},{},{},{}]; R.pendingScene=null; R.lastScene=-1;
   for(let i=0;i<6;i++) updateBus(i); updateEcho(); syncHeader(); updateSongLabel(); saveSoon();
 }
-function qbPickGenre(){const c=RUN.cards[RUN.sel];RUN.genre=QGENRES.find(g=>g.k===c.id);RUN.qb={g:c.id,phase:'set',i:0};buildQuickProject(RUN.genre);renderRun();qbHear();}
+function qbPickGenre(){const c=RUN.cards[RUN.sel];RUN.genre=QGENRES.find(g=>g.k===c.id);RUN.qb={g:c.id,phase:'set',i:0};buildQuickProject(RUN.genre);fm1AllTracks();renderRun();setTimeout(qbHear,FM1.out?400:0);}
 function qbHear(){
   if(!ctx) return; const now=ctx.currentTime+.05, gap=.7; let prev=null;
   progOf().forEach((r,i)=>{const v=voiceChord(r,prev,false);prev=v;v.forEach(d=>piano(degToMidi(d,3),now+i*gap,gap*.95,.4));piano(degToMidi(r,2),now+i*gap,gap*.95,.35);});
@@ -3227,10 +3227,10 @@ function qbTrack(i){
   if(i===0||i===1){const pool=shuffle(Object.keys(KITS)).sort((a,b)=>(g.kits.includes(b)?1:0)-(g.kits.includes(a)?1:0)).slice(0,3);
     RUN.qb.sounds=pool.map(k=>({id:k,title:k+' kit',desc:KITS[k].d,kit:true}));}
   else{const pool=({2:g.bass,3:g.chords,4:g.leads,5:g.pads})[i];RUN.qb.sounds=shuffle(pool).slice(0,3).map(n=>({id:n,title:n,desc:soundInfo(n)}));}
-  /* FM-1 plugged in: mix its sounds in, or show only them */
-  const src=qbSrc(), fm=src==='ember'?[]:fm1Pool(i,src==='fm1'?3:2);
-  if(fm.length){const own=RUN.qb.sounds.slice(0,3-fm.length);
-    RUN.qb.sounds=shuffle(own.concat(fm.map(x=>({id:fm1Id(x),title:x.name,desc:soundInfo(fm1Id(x)),fm1:true}))));}
+  /* FM-1 plugged in: only its sounds */
+  if(FM1.out){const fm=fm1Pool(i,3);
+    RUN.qb.sounds=fm.length?fm.map(x=>({id:fm1Id(x),title:x.name,desc:soundInfo(fm1Id(x)),fm1:true}))
+      :[{id:'fm1own',title:'FM-1 track '+(i+1),desc:FM1.sysex?'Plays whatever sound this FM-1 track has now.':'Plays whatever sound this FM-1 track has now. To choose from all FM-1 sounds, allow the sound list: Menu, FM-1.',fm1:true}];}
   RUN.qb.preview=genA(i)[0]; writeCand({track:i,slot:0},RUN.qb.preview); RUN.qb.ssel=0; qbApplySound(0);
   if(!R.playing) startPlay();
   RUN.step='qsound'; renderRun();
@@ -3239,10 +3239,6 @@ function qbApplySound(k){
   const i=RUN.qb.i, s=RUN.qb.sounds[k], t=S.tracks[i]; RUN.qb.ssel=k;
   useSound(i,s.id); if(i===1) W.snd[1]=s.id;
 }
-const KEY_QBSRC='emberbox.qbsrc.v1', QB_SRCS=[['mix','Mix'],['ember','Ember Box'],['fm1','FM-1']];
-function qbSrc(){if(!fm1Ready()) return 'ember'; const v=store.get(KEY_QBSRC); return QB_SRCS.some(x=>x[0]===v)?v:'mix';}
-function qbSetSrc(v){store.set(KEY_QBSRC,v); toast(v==='fm1'?'FM-1 sounds only':v==='ember'?'Ember Box sounds only':'Ember Box and FM-1 sounds'); qbTrack(RUN.qb.i);}
-function qbSrcStep(d){const k=QB_SRCS.findIndex(x=>x[0]===qbSrc()); qbSetSrc(QB_SRCS[(k+d+QB_SRCS.length)%QB_SRCS.length][0]);}
 function qbRerollSounds(){const i=RUN.qb.i;qbTrack(i);}
 function qbSoundDone(){
   const i=RUN.qb.i;
@@ -3274,8 +3270,8 @@ function qvibeHTML(){
     <div class="ract"><button class="btn" data-a="qhear">Hear it (X)</button><button class="btn play" data-a="qgo">Start building (A)</button></div>`;
 }
 function qsoundHTML(){
-  const i=RUN.qb.i, ss=RUN.qb.sounds, cur=ss[RUN.qb.ssel], src=qbSrc();
-  const seg=fm1Ready()&&FM1_ROLE[i]?`<div class="srcseg"><span class="note">Sounds from</span>${QB_SRCS.map(([k,l])=>`<button class="vchip${k===src?' on':''}" data-a="qsrc" data-m="${k}">${l}</button>`).join('')}<span class="note">D-pad ▲ ▼</span></div>`:'';
+  const i=RUN.qb.i, ss=RUN.qb.sounds, cur=ss[RUN.qb.ssel];
+  const seg=FM1.out?'<p class="note">Your FM-1 is connected, so every sound comes from it.</p>':'';
   const fmNote=cur&&cur.fm1&&!FM1.out?'<p class="note">The FM-1 is unplugged, so an Ember sound stands in until you plug it back in.</p>':'';
   return `<h2 class="rtitle">${ROLE[i]}: pick a sound</h2><p class="rsub">Track ${i+1} of 6. A sample pattern is playing so you can hear each sound in the mix.${cur&&cur.fm1?' FM-1 sounds play on FM-1 track '+(i+1)+'.':''}</p>${seg}${fmNote}
     <div class="rcards">${ss.map((s,k)=>`<button class="rcard${k===RUN.qb.ssel?' sel':''}" data-a="qsnd" data-k="${k}"><div class="rglyph">${s.fm1?'FM<small>FM-1</small>':s.kit?'<small>KIT</small>':ampGlyph(s.id)}</div><h3>${esc(s.title)}</h3><p>${esc(s.desc||'')}</p><div class="rtags">${k===RUN.qb.ssel?'<span>Playing now</span>':''}</div></button>`).join('')}</div>
@@ -3512,7 +3508,7 @@ function enterRoom(type,returning){
     pool.forEach((n,i)=>put(String(i+1),{t:'altar',v:n}));}
   if(type==='ruins') shuffle(cls.breaks).slice(0,3).forEach((b,i)=>put(String(i+1),{t:'totem',v:b}));
   /* with the FM-1 plugged in, the last spirit in each sound room is one of its sounds */
-  const withFm=(ti,list,n)=>{const f=fm1Pool(ti,1);return f.length?list.slice(0,n-1).concat([fm1Id(f[0])]):list.slice(0,n);};
+  const withFm=(ti,list,n)=>{const f=fm1Pool(ti,n);return f.length?f.map(fm1Id):list.slice(0,n);};
   if(type==='jungle') withFm(1,shuffle(Object.keys(KITS)),3).forEach((k,i)=>put(String(i+1),{t:'kit',v:k,track:1}));
   if(fl&&fl!=='perc'){const pool={bass:cls.bass,chords:cls.chords,hook:cls.leads,pad:cls.pads}[fl];
     withFm(FLOOR_TRACK[fl],shuffle(pool),3).forEach((b,i)=>put(String(i+1),{t:'spirit',v:b,track:FLOOR_TRACK[fl]}));}
@@ -3565,7 +3561,7 @@ function interact(){
 function openDoors(){if(!W.doorsOpen){W.doorsOpen=true;rumble(.5,80);}}
 const PIANO={name:'Piano',alg:1,ratios:[1,1,1,4],levels:[.75,.3,.55,.12],amp:[.002,1.4,.12,.5],mod:[.001,.45,0,.35],cut:5200,res:.4,fenv:0,spread:2,mono:false,glide:0,bright:1};
 function prevBus(){if(!A.prevBus){A.prevBus=ctx.createGain();A.prevBus.gain.value=.9;A.prevBus.connect(A.mix);}return A.prevBus;}
-function piano(midi,time,dur,vel){if(!ctx)return;buildVoice(PIANO,440*Math.pow(2,(midi-69)/12),null,time,dur,vel,prevBus());}
+function piano(midi,time,dur,vel){if(!ctx)return;if(FM1.out&&S.tracks[3]&&S.tracks[3].src==='fm1'){fm1Send(3,midi,time,dur,vel);return;}buildVoice(PIANO,440*Math.pow(2,(midi-69)/12),null,time,dur,vel,prevBus());}
 function duckDrums(sec){if(!ctx)return;A.bus[0].vol.gain.setTargetAtTime(busLevel(0)*.25,ctx.currentTime,.05);clearTimeout(W.duckT);W.duckT=setTimeout(()=>updateBus(0),sec*1000);}
 function homeKey(){return W.found&&W.found.key!==null&&W.found.key!==undefined?W.found.key:S.key;}
 function scaleNotes(name){const k=homeKey();return SCALES[name].map(v=>NOTE_NAMES[(k+v)%12]).join(' ');}
@@ -4291,7 +4287,7 @@ async function fm1ApplySong(){
   if(!FM1.out||!FM1.sysex) return;
   const sid=S.id; let n=0;
   for(let i=0;i<6;i++){
-    const t=S.tracks[i]; if(t.src!=='fm1'||t.type==='break'||!t.fm1) continue;
+    const t=S.tracks[i]; if(t.src!=='fm1'||!t.fm1) continue;
     if(S.id!==sid) return;
     const r=await fm1LoadOn(i,t.fm1.e,t.fm1.p); if(r) n++;
     for(const [cc,v] of Object.entries(t.fm1.cc||{})) fm1CC(i,+cc,v);
@@ -4311,7 +4307,7 @@ async function fm1Choose(i,k){
 }
 function fm1Visible(){
   const t=S.tracks[S.focus]; if(!FM1.list) return [];
-  const tab=FM1.tab||(t.fm1&&t.fm1.type)||(t.type==='drums'?'DRUM':'BASS');
+  const tab=FM1.tab||(t.fm1&&t.fm1.type)||(t.type!=='fm'?'DRUM':'BASS');
   return FM1.list.map((x,k)=>Object.assign({k},x)).filter(x=>x.type===tab);
 }
 function fm1DefaultFor(i){
@@ -4322,7 +4318,7 @@ function fm1DefaultFor(i){
   return FM1.list.findIndex(x=>x.type===want&&fm1Usable(i,x));
 }
 function fm1SetSrc(i,src){
-  const t=S.tracks[i]; if(t.type==='break'){toast('Break tracks always use Ember Box sounds');return;}
+  const t=S.tracks[i];
   if(t.src===src||(!t.src&&src==='ember')) return;
   if(R.voices[i]&&ctx) R.voices[i].forEach(v=>v.cut(ctx.currentTime));
   if(t.src==='fm1'&&FM1.out) try{FM1.out.send([0xB0|i,123,0]);}catch(e){}
@@ -4334,7 +4330,7 @@ function fm1SetSrc(i,src){
 }
 function fm1Cycle(i,d){
   const t=S.tracks[i]; if(!FM1.list||!FM1.list.length){toast('No FM-1 sound list yet');return;}
-  const type=(t.fm1&&t.fm1.type)||'BASS';
+  const type=(t.fm1&&t.fm1.type)||(t.type!=='fm'?'DRUM':'BASS');
   const ks=FM1.list.map((x,k)=>k).filter(k=>FM1.list[k].type===type&&fm1Usable(i,FM1.list[k]));
   if(!ks.length) return;
   let at=t.fm1?ks.findIndex(k=>FM1.list[k].e===t.fm1.e&&FM1.list[k].p===t.fm1.p):-1;
@@ -4348,15 +4344,16 @@ function fm1Parse(v){const a=v.split(':'),e=+a[1],p=+a[2],name=a.slice(3).join('
 function fm1EngOf(e){const x=FM1.list&&FM1.list.find(y=>y.e===e);return (x&&x.eng)||(FM1.engs&&FM1.engs[e])||'';}
 function sndName(v){return isFm1(v)?fm1Parse(v).name+' (FM-1)':v;}
 /* the FM-1 sound types that suit each Ember track */
-const FM1_ROLE={1:['DRUM'],2:['BASS'],3:['KEYS','PAD','PLUCK'],4:['LEAD','PLUCK','KEYS'],5:['PAD']};
+const FM1_ROLE={0:['DRUM'],1:['DRUM'],2:['BASS'],3:['KEYS','PAD','PLUCK'],4:['LEAD','PLUCK','KEYS'],5:['PAD']};
 function fm1Pool(i,n){
   if(!fm1Ready()||!FM1_ROLE[i]) return [];
-  const ok=FM1.list.filter(x=>FM1_ROLE[i].includes(x.type)&&fm1Usable(i,x)&&(i!==1||x.e===10||x.e===14));
+  const ok=FM1.list.filter(x=>FM1_ROLE[i].includes(x.type)&&fm1Usable(i,x)&&(i>1||x.e===10||x.e===14));
   return shuffle(ok).slice(0,n);
 }
-/* put a sound on a track: an Ember preset or kit name, or an FM-1 sound id */
+/* put a sound on a track: an Ember preset or kit name, an FM-1 sound id, or 'fm1own' (the FM-1 track's current sound) */
 function useSound(i,v){
   const t=S.tracks[i];
+  if(v==='fm1own'){if(t.src!=='fm1'&&R.voices[i]&&ctx) R.voices[i].forEach(o=>o.cut(ctx.currentTime)); t.src='fm1'; saveSoon(); return;}
   if(isFm1(v)){
     const x=fm1Parse(v);
     if(t.src!=='fm1'&&R.voices[i]&&ctx) R.voices[i].forEach(o=>o.cut(ctx.currentTime));
@@ -4371,9 +4368,19 @@ function useSound(i,v){
 }
 /* what a track is playing, for labels */
 function trackSnd(t){
-  if(t.type==='break') return BREAKS[(t.data['break'][0]||{}).brk||'amen'].name;
-  if(t.src==='fm1'&&t.fm1) return t.fm1.name+' (FM-1)';
+  if(t.type==='break') return BREAKS[(t.data['break'][0]||{}).brk||'amen'].name+(t.src==='fm1'&&t.fm1?', '+t.fm1.name+' (FM-1)':'');
+  if(t.src==='fm1') return t.fm1?t.fm1.name+' (FM-1)':'FM-1 track '+(S.tracks.indexOf(t)+1);
   return t.type==='drums'?'kit '+(isFm1(W.snd[1])?'standard':(W.snd[1]||'standard')):t.preset;
+}
+/* the master filter can't reach the FM-1's audio, so it moves each FM-1 track's Brightness (CC 74) instead */
+function fm1Filter(x){
+  if(!FM1.out) return; FM1.dj=FM1.dj||[];
+  S.tracks.forEach((t,i)=>{
+    if(t.src!=='fm1') return;
+    const base=(t.fm1&&t.fm1.cc&&t.fm1.cc[74]!==undefined)?t.fm1.cc[74]:64;
+    const v=Math.round(x<0?base*(1+x):base+(127-base)*x);
+    if(FM1.dj[i]!==v){FM1.dj[i]=v;fm1CC(i,74,v);}
+  });
 }
 /* one note straight to an FM-1 track */
 function fm1Send(ch,n,time,dur,vel){
@@ -4396,7 +4403,7 @@ function fm1AudEnd(){
   const t=S.tracks[a.ti]; if(t&&t.src==='fm1'&&t.fm1&&FM1.sysex) fm1LoadOn(a.ti,t.fm1.e,t.fm1.p);
 }
 /* playback: FM-1 tracks send notes on their own channel; unplugged, the Ember sound stands in */
-const fm1Plays=i=>{const t=S.tracks[i];return t.src==='fm1'&&t.type!=='break'&&!!FM1.out&&!!ctx;};
+const fm1Plays=i=>{const t=S.tracks[i];return t.src==='fm1'&&!!FM1.out&&!!ctx;};
 function fm1Note(i,n,time,dur,vel){
   if(busLevel(i)<=0) return;
   n=Math.max(0,Math.min(127,Math.round(n)));
@@ -4413,7 +4420,6 @@ function fm1Label(t){
   return 'Stand-in · '+(t.type==='fm'?t.preset:'Ember kit');
 }
 function fm1SrcHTML(t){
-  if(t.type==='break') return '';
   const i=S.focus, on=t.src==='fm1';
   return `<div class="srcseg"><span class="note">Sound from</span><button class="vchip${on?'':' on'}" data-a="srcset" data-m="ember">Ember Box</button><button class="vchip${on?' on':''}" data-a="srcset" data-m="fm1">FM-1 track ${i+1}</button></div>`;
 }
@@ -4534,15 +4540,43 @@ function learnVibe(){
 /* hear each vibe's beat while browsing, without making a new song each time */
 function learnVibePreview(){
   const g=QGENRES.find(x=>x.k===RUN.cards[RUN.sel].id); RUN.genre=g;
-  if(!RUN.ln.id){buildQuickProject(g);RUN.ln.id=S.id;S.name='My first track';updateSongLabel();}
+  if(!RUN.ln.id){buildQuickProject(g);RUN.ln.id=S.id;S.name='My first track';updateSongLabel();learnFmSounds();}
   else{setBpm(g.bpm);S.tracks[0].data['break'].forEach(p=>p.brk=g.breaks[0]);S.tracks[0].swing=g.swing;}
   S.tracks.forEach((t,i)=>t.slot=i===0?0:-1); if(!R.playing) startPlay();
 }
+/* FM-1 plugged in: every track plays on it, each with a sound that suits the layer */
+const learnFm=()=>!!FM1.out;
+function learnFmSounds(){fm1AllTracks();}
+/* FM-1 plugged in: every track of a new song plays on it, with a sound that suits each track */
+function fm1AllTracks(){
+  if(!FM1.out) return;
+  for(let i=0;i<6;i++){
+    const x=fm1Pool(i,1)[0], t=S.tracks[i];
+    if(x) useSound(i,fm1Id(x));
+    else{t.src='fm1';if(R.voices[i]&&ctx) R.voices[i].forEach(o=>o.cut(ctx.currentTime));}
+  }
+  saveSoon();
+}
+/* X on a layer: another sound for it, from the FM-1 when it's connected */
+function learnSound(){
+  const L=RUN.ln, Ly=LEARN_LAYERS[L.li], i=Ly.t, t=S.tracks[i], g=genre();
+  let pool;
+  if(learnFm()){
+    if(!fm1Ready()){toast('Allow the FM-1 sound list to try other sounds: Menu, FM-1');return;}
+    pool=fm1Pool(i,40).map(fm1Id).filter(v=>!(t.fm1&&v===fm1Id(Object.assign({},t.fm1))));
+  }else pool=(i===0?g.kits:({2:g.bass,3:g.chords,4:g.leads})[i]||[]).filter(n=>n!==t.preset&&n!==W.snd[i]);
+  if(!pool.length){toast('No other sounds for this layer');return;}
+  const v=pick1(pool); useSound(i,v); W.snd[i]=v; rumble(.3,40); toast(sndName(v)); renderRun();
+}
+function learnSoundName(i){const t=S.tracks[i];
+  if(t.src==='fm1') return t.fm1?t.fm1.name+', on FM-1 track '+(i+1):'FM-1 track '+(i+1)+'’s own sound';
+  return t.type==='fm'?t.preset:(W.snd[i]||'the standard')+' kit';}
 function learnPickVibe(){
   const g=QGENRES.find(x=>x.k===RUN.cards[RUN.sel].id); RUN.genre=g;
   buildQuickProject(g); if(RUN.ln.id) S.id=RUN.ln.id; else RUN.ln.id=S.id;
   S.scale='Minor'; S.prog=pick1(progPool()).slice(); S.tracks[4].name='Melody';
   S.name='My first track, '+g.name; syncHeader(); updateSongLabel(); rumble(.4,40);
+  learnFmSounds();
   learnLayer(0);
 }
 function learnLayer(li){
@@ -4589,9 +4623,16 @@ function learnScenePlay(c){
   else if(R.lastScene!==c||R.pendingScene!==null) R.pendingScene=R.lastScene===c?null:c;
   renderRun();
 }
+const LEARN_CUES_FM={
+  echo:{goal:'repeat',text:'Push the right stick up for a beat repeat: the last beat stutters. Let go and the track carries on.',keys:['RS']},
+  tape:{goal:'stop',text:'Finish the show: press + to stop the music.',keys:['PLUS']}};
+function learnCues(){
+  if(!S.tracks.some(t=>t.src==='fm1')) return LEARN_CUES;
+  return LEARN_CUES.map(c=>LEARN_CUES_FM[c.goal]||c);
+}
 function learnStage(){
   $('#run').classList.add('hidden'); RUN.step='finale';
-  RUN.fin={learn:true,cues:LEARN_CUES,i:0,wait:0,cueStart:null,over:false};
+  RUN.fin={learn:true,cues:learnCues(),i:0,wait:0,cueStart:null,over:false};
   S.scenes=clone(LEARN_SCENES);
   if(!R.playing) startPlay();
   S.tracks.forEach((t,i)=>t.slot=S.scenes[0][i]); R.pendingScene=null; R.lastScene=0; R.pending=[{},{},{},{},{},{}];
@@ -4607,6 +4648,8 @@ function renderLearnCue(msg){
 }
 /* a scene step counts once that scene is queued, or plays after something else did */
 function learnGoal(F,g){
+  if(g==='repeat') return R.repeat>0;
+  if(g==='stop') return !R.playing;
   if(g[0]!=='s') return finaleGoal(g);
   const n=+g[1]; if(R.lastScene!==n) F.away=true;
   return R.pendingScene===n||(F.away&&R.lastScene===n);
@@ -4630,7 +4673,7 @@ function learnStageEnd(){
   const F=RUN.fin; F.over=true; store.set(KEY_LEARNED,1);
   setTimeout(()=>{
     if(!RUN.active||RUN.mode!=='learn') return;
-    if(R.playing) stopPlay();
+    if(R.playing) stopPlay(); fm1Filter(0);
     $('#finale').classList.add('hidden'); $('#finale').classList.remove('learn');
     saveSoon(); $('#run').classList.remove('hidden'); RUN.step='ldone'; renderRun();
   },1800);
@@ -4649,6 +4692,7 @@ function learnHTML(st){
       <p class="rsub">A groovebox plays short loops of music over and over. You build a track by stacking loops on top of each other, then you perform it by bringing them in and out. You don’t need to know anything about music: Ember Box asks simple questions and handles the hard parts.</p>
       <ol class="lsteps"><li><b>Pick a vibe.</b> The style of music.</li><li><b>Stack four layers.</b> Drums, bass, chords and melody. For each one, you choose from three ideas by ear.</li><li><b>Play along.</b> Four buttons, and no wrong notes.</li><li><b>Perform it.</b> Ember Box shows you which buttons to press, one step at a time.</li></ol>
     </div><div class="lpadbox">${learnPadSVG(['A'])}<p class="note" id="lpadst">${getPad()?'Controller connected. Press any button: it lights up here.':'No controller found yet. Connect one, or tap the buttons on screen instead.'}</p></div></div>
+    ${learnFm()?'<p class="lbox">Your <b>FM-1</b> is connected, so every sound in your track will come from it. Turn its volume up.</p>':''}
     <div class="ract"><button class="btn play" data-a="lnext">Let’s go (A)</button><span class="note">About 10 minutes. You can leave at any time and your song is saved.</span></div>`;
   if(st==='lvibe') return cardsHTML('Pick a vibe','This sets the style, the speed and the sounds. The beat you hear changes as you browse. BPM means beats per minute: higher is faster.')
     +learnTip(['LEFT','RIGHT','A'],'D-pad ◀ ▶ to hear each vibe, A to choose it. Or tap a card twice.');
@@ -4659,8 +4703,8 @@ function learnHTML(st){
       ${L.li===0?'<p class="lbox">Each idea is a <b>loop</b>: a short pattern, a couple of bars long, that repeats forever. Choose the one that makes you want to nod along.</p>':`<p class="lbox">You’ll hear each idea playing with the ${L.li===1?'drums':'layers'} you already picked, so you can tell what fits.</p>`}
       <div class="rcards">${L.cands.map((c,i)=>`<button class="rcard${i===L.sel?' sel':''}" data-a="lcard" data-k="${i}">
         <div class="rglyph pkg">${candSVG(c)}</div><h3>Idea ${i+1}</h3><p>${esc(c.name)}${c.desc?'. '+esc(c.desc):''}</p><div class="rtags">${i===L.sel?'<span>Playing now</span>':''}</div></button>`).join('')}</div>
-      <div class="ract"><button class="btn play" data-a="lkeep">Keep idea ${L.sel+1} (A)</button><button class="btn" data-a="lroll">Three new ideas (Y)</button></div>
-      ${learnTip(['LEFT','RIGHT','A','Y'],'D-pad ◀ ▶ to hear each idea, A to keep the one playing, Y for fresh ideas.')}`;}
+      <div class="ract"><button class="btn play" data-a="lkeep">Keep idea ${L.sel+1} (A)</button><button class="btn" data-a="lroll">Three new ideas (Y)</button><button class="btn" data-a="lsnd">Different sound (X)</button><span class="note">Sound: ${esc(learnSoundName(Ly.t))}</span></div>
+      ${learnTip(['LEFT','RIGHT','A','Y','X'],'D-pad ◀ ▶ to hear each idea, A to keep the one playing, Y for fresh ideas, X to try another sound.')}`;}
   if(st==='ljam'){
     const cell=(k,area)=>`<button class="ljk${L.jam[k]?' on':''}" style="grid-area:${area}" data-jam="${k}"><b>${FACES[k]}</b><small>${LEARN_JAM_NAME[k]}</small></button>`;
     return `<h2 class="rtitle">Your turn to play</h2>
@@ -4684,15 +4728,15 @@ function learnHTML(st){
         <dt>Layer</dt><dd>One part of the music: drums, bass, chords, melody. Ember Box calls them tracks and has six.</dd>
         <dt>Pattern A and B</dt><dd>Each track has a main loop and a variation, like the busier drums in your Full scene.</dd>
         <dt>Scene</dt><dd>A set of layers playing together. Switching scenes is how you perform.</dd>
-        <dt>Effects</dt><dd>The filter, echo and tape stop change the sound live without changing the notes.</dd></dl>
-      <p class="lbox">Your controls on stage: <b>hold R and press A, B, Y or X</b> for scenes 1 to 4. <b>Right stick</b> for the filter, <b>ZL</b> for a drum fill, <b>+</b> to start or stop.</p>
+        <dt>Effects</dt><dd>${S.tracks.some(t=>t.src==='fm1')?'The filter and beat repeat change how your track sounds live, without changing the notes.':'The filter, echo and tape stop change the sound live without changing the notes.'}</dd></dl>
+      <p class="lbox">Your controls on stage: <b>hold R and press A, B, Y or X</b> for scenes 1 to 4. <b>Right stick</b> left or right for the filter${S.tracks.some(t=>t.src==='fm1')?', up for a beat repeat':''}, <b>ZL</b> for a drum fill, <b>+</b> to start or stop.</p>
       <div class="ract"><button class="btn play" data-a="rdone" data-v="perform">Play it freely (A)</button><button class="btn" data-a="lquick">Make another with Quick Build (Y)</button></div>`;
   return '';
 }
 function learnPad(st,cur,pr,rl){
   if(st==='lwelcome'){if(pr('A')) learnNext(); return true;}
   if(st==='lvibe'){if(pr('LEFT')) runSelect(RUN.sel-1); if(pr('RIGHT')) runSelect(RUN.sel+1); if(pr('A')) learnPickVibe(); return true;}
-  if(st==='llayer'){if(pr('LEFT')) learnSel(RUN.ln.sel-1); if(pr('RIGHT')) learnSel(RUN.ln.sel+1); if(pr('A')) learnKeep(); else if(pr('Y')) learnReroll(); return true;}
+  if(st==='llayer'){if(pr('LEFT')) learnSel(RUN.ln.sel-1); if(pr('RIGHT')) learnSel(RUN.ln.sel+1); if(pr('A')) learnKeep(); else if(pr('Y')) learnReroll(); else if(pr('X')) learnSound(); return true;}
   if(st==='ljam'){FACES.forEach((n,k)=>{if(pr(n)) learnJamOn(k); if(rl(n)) learnJamOff(k);}); if(pr('PLUS')) learnNext(); return true;}
   if(st==='lscenes'){if(pr('LEFT')) learnScenePlay(RUN.ln.scene-1); if(pr('RIGHT')) learnScenePlay(RUN.ln.scene+1); if(pr('A')) learnNext(); return true;}
   if(st==='ldone'){if(pr('A')) runFinish('perform'); else if(pr('Y')){runFinish('perform');openQuick(false);} return true;}
