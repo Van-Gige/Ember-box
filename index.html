@@ -898,6 +898,7 @@ function setDJ(x){
   A.lp.frequency.setTargetAtTime(lpF,now,.02); A.hp.frequency.setTargetAtTime(hpF,now,.02);
   A.lp.Q.setTargetAtTime(x<0?q:.7,now,.02); A.hp.Q.setTargetAtTime(x>0?q:.7,now,.02);
   const k=$('#xfk'); if(k) k.style.left=(50+x*46)+'%';
+  fm1Filter(x);
 }
 function tapeStop(on){
   if(!ctx) return;
@@ -1186,7 +1187,7 @@ function toast(msg){const t=$('#toast');t.textContent=msg;t.classList.add('show'
 
 /* ================= rendering ================= */
 function subLabel(t){
-  if(t.src==='fm1'&&t.type!=='break') return fm1Label(t);
+  if(t.src==='fm1') return fm1Label(t);
   if(t.type==='fm') return t.preset;
   if(t.type==='break'){const p=t.slot>=0?curPat(t,t.slot):curPat(t,t.editSlot);return (BREAKS[p.brk]||BREAKS.amen).name+', '+VARS[p.v].name.toLowerCase();}
   return 'Kit tune '+(t.kit.tune>0?'+':'')+t.kit.tune;
@@ -1584,7 +1585,7 @@ function gfxSVG(k,t){
   return '';
 }
 function soundHTML(){
-  if(S.tracks[S.focus].src==='fm1'&&S.tracks[S.focus].type!=='break') return fm1SoundHTML();
+  if(S.tracks[S.focus].src==='fm1') return fm1SoundHTML();
   const t=S.tracks[S.focus], pages=soundPages(t), pg=pages[pageIndex(pages)];
   const tabs=pages.map(p=>`<button class="stab${p.k===pg.k?' on':''}" data-a="spage" data-k="${p.k}">${p.name}</button>`).join('');
   let body, knobs='';
@@ -1608,7 +1609,7 @@ function movePresetSel(d){
   const el=document.querySelector(`.pcard[data-k="${R.presetSel}"]`); if(el) el.scrollIntoView({block:'nearest'});
 }
 function soundPad(cur,pr,now,holdR){
-  if(S.tracks[S.focus].src==='fm1'&&S.tracks[S.focus].type!=='break'){fm1SoundPad(cur,pr,now,holdR);return;}
+  if(S.tracks[S.focus].src==='fm1'){fm1SoundPad(cur,pr,now,holdR);return;}
   const F=S.focus,t=S.tracks[F],pages=soundPages(t),pi=pageIndex(pages),pg=pages[pi];
   if(holdR){
     if(pr('LEFT')||pr('RIGHT')){const n=(pi+(cur.RIGHT?1:pages.length-1))%pages.length;R.spage=pages[n].k;R.knob=0;renderMain();toast(pages[n].name);}
@@ -1996,6 +1997,7 @@ document.addEventListener('click',e=>{
     case 'lcard':{const k=+b.dataset.k;if(k===RUN.ln.sel) learnKeep(); else learnSel(k);break;}
     case 'lkeep':learnKeep();break;
     case 'lroll':learnReroll();break;
+    case 'lsnd':learnSound();break;
     case 'lscene':learnScenePlay(+b.dataset.k);break;
     case 'lskip':learnSkip();break;
     case 'lquick':runFinish('perform');openQuick(false);break;
@@ -4291,7 +4293,7 @@ async function fm1ApplySong(){
   if(!FM1.out||!FM1.sysex) return;
   const sid=S.id; let n=0;
   for(let i=0;i<6;i++){
-    const t=S.tracks[i]; if(t.src!=='fm1'||t.type==='break'||!t.fm1) continue;
+    const t=S.tracks[i]; if(t.src!=='fm1'||!t.fm1) continue;
     if(S.id!==sid) return;
     const r=await fm1LoadOn(i,t.fm1.e,t.fm1.p); if(r) n++;
     for(const [cc,v] of Object.entries(t.fm1.cc||{})) fm1CC(i,+cc,v);
@@ -4311,7 +4313,7 @@ async function fm1Choose(i,k){
 }
 function fm1Visible(){
   const t=S.tracks[S.focus]; if(!FM1.list) return [];
-  const tab=FM1.tab||(t.fm1&&t.fm1.type)||(t.type==='drums'?'DRUM':'BASS');
+  const tab=FM1.tab||(t.fm1&&t.fm1.type)||(t.type!=='fm'?'DRUM':'BASS');
   return FM1.list.map((x,k)=>Object.assign({k},x)).filter(x=>x.type===tab);
 }
 function fm1DefaultFor(i){
@@ -4322,7 +4324,7 @@ function fm1DefaultFor(i){
   return FM1.list.findIndex(x=>x.type===want&&fm1Usable(i,x));
 }
 function fm1SetSrc(i,src){
-  const t=S.tracks[i]; if(t.type==='break'){toast('Break tracks always use Ember Box sounds');return;}
+  const t=S.tracks[i];
   if(t.src===src||(!t.src&&src==='ember')) return;
   if(R.voices[i]&&ctx) R.voices[i].forEach(v=>v.cut(ctx.currentTime));
   if(t.src==='fm1'&&FM1.out) try{FM1.out.send([0xB0|i,123,0]);}catch(e){}
@@ -4334,7 +4336,7 @@ function fm1SetSrc(i,src){
 }
 function fm1Cycle(i,d){
   const t=S.tracks[i]; if(!FM1.list||!FM1.list.length){toast('No FM-1 sound list yet');return;}
-  const type=(t.fm1&&t.fm1.type)||'BASS';
+  const type=(t.fm1&&t.fm1.type)||(t.type!=='fm'?'DRUM':'BASS');
   const ks=FM1.list.map((x,k)=>k).filter(k=>FM1.list[k].type===type&&fm1Usable(i,FM1.list[k]));
   if(!ks.length) return;
   let at=t.fm1?ks.findIndex(k=>FM1.list[k].e===t.fm1.e&&FM1.list[k].p===t.fm1.p):-1;
@@ -4348,10 +4350,10 @@ function fm1Parse(v){const a=v.split(':'),e=+a[1],p=+a[2],name=a.slice(3).join('
 function fm1EngOf(e){const x=FM1.list&&FM1.list.find(y=>y.e===e);return (x&&x.eng)||(FM1.engs&&FM1.engs[e])||'';}
 function sndName(v){return isFm1(v)?fm1Parse(v).name+' (FM-1)':v;}
 /* the FM-1 sound types that suit each Ember track */
-const FM1_ROLE={1:['DRUM'],2:['BASS'],3:['KEYS','PAD','PLUCK'],4:['LEAD','PLUCK','KEYS'],5:['PAD']};
+const FM1_ROLE={0:['DRUM'],1:['DRUM'],2:['BASS'],3:['KEYS','PAD','PLUCK'],4:['LEAD','PLUCK','KEYS'],5:['PAD']};
 function fm1Pool(i,n){
   if(!fm1Ready()||!FM1_ROLE[i]) return [];
-  const ok=FM1.list.filter(x=>FM1_ROLE[i].includes(x.type)&&fm1Usable(i,x)&&(i!==1||x.e===10||x.e===14));
+  const ok=FM1.list.filter(x=>FM1_ROLE[i].includes(x.type)&&fm1Usable(i,x)&&(i>1||x.e===10||x.e===14));
   return shuffle(ok).slice(0,n);
 }
 /* put a sound on a track: an Ember preset or kit name, or an FM-1 sound id */
@@ -4375,6 +4377,16 @@ function trackSnd(t){
   if(t.src==='fm1'&&t.fm1) return t.fm1.name+' (FM-1)';
   return t.type==='drums'?'kit '+(isFm1(W.snd[1])?'standard':(W.snd[1]||'standard')):t.preset;
 }
+/* the master filter can't reach the FM-1's audio, so it moves each FM-1 track's Brightness (CC 74) instead */
+function fm1Filter(x){
+  if(!FM1.out) return; FM1.dj=FM1.dj||[];
+  S.tracks.forEach((t,i)=>{
+    if(t.src!=='fm1') return;
+    const base=(t.fm1&&t.fm1.cc&&t.fm1.cc[74]!==undefined)?t.fm1.cc[74]:64;
+    const v=Math.round(x<0?base*(1+x):base+(127-base)*x);
+    if(FM1.dj[i]!==v){FM1.dj[i]=v;fm1CC(i,74,v);}
+  });
+}
 /* one note straight to an FM-1 track */
 function fm1Send(ch,n,time,dur,vel){
   if(!FM1.out||!ctx) return;
@@ -4396,7 +4408,7 @@ function fm1AudEnd(){
   const t=S.tracks[a.ti]; if(t&&t.src==='fm1'&&t.fm1&&FM1.sysex) fm1LoadOn(a.ti,t.fm1.e,t.fm1.p);
 }
 /* playback: FM-1 tracks send notes on their own channel; unplugged, the Ember sound stands in */
-const fm1Plays=i=>{const t=S.tracks[i];return t.src==='fm1'&&t.type!=='break'&&!!FM1.out&&!!ctx;};
+const fm1Plays=i=>{const t=S.tracks[i];return t.src==='fm1'&&!!FM1.out&&!!ctx;};
 function fm1Note(i,n,time,dur,vel){
   if(busLevel(i)<=0) return;
   n=Math.max(0,Math.min(127,Math.round(n)));
@@ -4413,7 +4425,6 @@ function fm1Label(t){
   return 'Stand-in · '+(t.type==='fm'?t.preset:'Ember kit');
 }
 function fm1SrcHTML(t){
-  if(t.type==='break') return '';
   const i=S.focus, on=t.src==='fm1';
   return `<div class="srcseg"><span class="note">Sound from</span><button class="vchip${on?'':' on'}" data-a="srcset" data-m="ember">Ember Box</button><button class="vchip${on?' on':''}" data-a="srcset" data-m="fm1">FM-1 track ${i+1}</button></div>`;
 }
@@ -4534,15 +4545,41 @@ function learnVibe(){
 /* hear each vibe's beat while browsing, without making a new song each time */
 function learnVibePreview(){
   const g=QGENRES.find(x=>x.k===RUN.cards[RUN.sel].id); RUN.genre=g;
-  if(!RUN.ln.id){buildQuickProject(g);RUN.ln.id=S.id;S.name='My first track';updateSongLabel();}
+  if(!RUN.ln.id){buildQuickProject(g);RUN.ln.id=S.id;S.name='My first track';updateSongLabel();learnFmSounds();}
   else{setBpm(g.bpm);S.tracks[0].data['break'].forEach(p=>p.brk=g.breaks[0]);S.tracks[0].swing=g.swing;}
   S.tracks.forEach((t,i)=>t.slot=i===0?0:-1); if(!R.playing) startPlay();
 }
+/* FM-1 plugged in: every track plays on it, each with a sound that suits the layer */
+const learnFm=()=>!!FM1.out;
+function learnFmSounds(){
+  if(!learnFm()) return;
+  for(let i=0;i<6;i++){
+    const x=fm1Pool(i,1)[0], t=S.tracks[i];
+    if(x) useSound(i,fm1Id(x));
+    else{t.src='fm1';if(R.voices[i]&&ctx) R.voices[i].forEach(o=>o.cut(ctx.currentTime));}
+  }
+  saveSoon();
+}
+/* X on a layer: another sound for it, from the FM-1 when it's connected */
+function learnSound(){
+  const L=RUN.ln, Ly=LEARN_LAYERS[L.li], i=Ly.t, t=S.tracks[i], g=genre();
+  let pool;
+  if(learnFm()){
+    if(!fm1Ready()){toast('Allow the FM-1 sound list to try other sounds: Menu, FM-1');return;}
+    pool=fm1Pool(i,40).map(fm1Id).filter(v=>!(t.fm1&&v===fm1Id(Object.assign({},t.fm1))));
+  }else pool=(i===0?g.kits:({2:g.bass,3:g.chords,4:g.leads})[i]||[]).filter(n=>n!==t.preset&&n!==W.snd[i]);
+  if(!pool.length){toast('No other sounds for this layer');return;}
+  const v=pick1(pool); useSound(i,v); W.snd[i]=v; rumble(.3,40); toast(sndName(v)); renderRun();
+}
+function learnSoundName(i){const t=S.tracks[i];
+  if(t.src==='fm1') return t.fm1?t.fm1.name+', on FM-1 track '+(i+1):'FM-1 track '+(i+1)+'’s own sound';
+  return t.type==='fm'?t.preset:(W.snd[i]||'the standard')+' kit';}
 function learnPickVibe(){
   const g=QGENRES.find(x=>x.k===RUN.cards[RUN.sel].id); RUN.genre=g;
   buildQuickProject(g); if(RUN.ln.id) S.id=RUN.ln.id; else RUN.ln.id=S.id;
   S.scale='Minor'; S.prog=pick1(progPool()).slice(); S.tracks[4].name='Melody';
   S.name='My first track, '+g.name; syncHeader(); updateSongLabel(); rumble(.4,40);
+  learnFmSounds();
   learnLayer(0);
 }
 function learnLayer(li){
@@ -4589,9 +4626,16 @@ function learnScenePlay(c){
   else if(R.lastScene!==c||R.pendingScene!==null) R.pendingScene=R.lastScene===c?null:c;
   renderRun();
 }
+const LEARN_CUES_FM={
+  echo:{goal:'repeat',text:'Push the right stick up for a beat repeat: the last beat stutters. Let go and the track carries on.',keys:['RS']},
+  tape:{goal:'stop',text:'Finish the show: press + to stop the music.',keys:['PLUS']}};
+function learnCues(){
+  if(!S.tracks.some(t=>t.src==='fm1')) return LEARN_CUES;
+  return LEARN_CUES.map(c=>LEARN_CUES_FM[c.goal]||c);
+}
 function learnStage(){
   $('#run').classList.add('hidden'); RUN.step='finale';
-  RUN.fin={learn:true,cues:LEARN_CUES,i:0,wait:0,cueStart:null,over:false};
+  RUN.fin={learn:true,cues:learnCues(),i:0,wait:0,cueStart:null,over:false};
   S.scenes=clone(LEARN_SCENES);
   if(!R.playing) startPlay();
   S.tracks.forEach((t,i)=>t.slot=S.scenes[0][i]); R.pendingScene=null; R.lastScene=0; R.pending=[{},{},{},{},{},{}];
@@ -4607,6 +4651,8 @@ function renderLearnCue(msg){
 }
 /* a scene step counts once that scene is queued, or plays after something else did */
 function learnGoal(F,g){
+  if(g==='repeat') return R.repeat>0;
+  if(g==='stop') return !R.playing;
   if(g[0]!=='s') return finaleGoal(g);
   const n=+g[1]; if(R.lastScene!==n) F.away=true;
   return R.pendingScene===n||(F.away&&R.lastScene===n);
@@ -4630,7 +4676,7 @@ function learnStageEnd(){
   const F=RUN.fin; F.over=true; store.set(KEY_LEARNED,1);
   setTimeout(()=>{
     if(!RUN.active||RUN.mode!=='learn') return;
-    if(R.playing) stopPlay();
+    if(R.playing) stopPlay(); fm1Filter(0);
     $('#finale').classList.add('hidden'); $('#finale').classList.remove('learn');
     saveSoon(); $('#run').classList.remove('hidden'); RUN.step='ldone'; renderRun();
   },1800);
@@ -4649,6 +4695,7 @@ function learnHTML(st){
       <p class="rsub">A groovebox plays short loops of music over and over. You build a track by stacking loops on top of each other, then you perform it by bringing them in and out. You don’t need to know anything about music: Ember Box asks simple questions and handles the hard parts.</p>
       <ol class="lsteps"><li><b>Pick a vibe.</b> The style of music.</li><li><b>Stack four layers.</b> Drums, bass, chords and melody. For each one, you choose from three ideas by ear.</li><li><b>Play along.</b> Four buttons, and no wrong notes.</li><li><b>Perform it.</b> Ember Box shows you which buttons to press, one step at a time.</li></ol>
     </div><div class="lpadbox">${learnPadSVG(['A'])}<p class="note" id="lpadst">${getPad()?'Controller connected. Press any button: it lights up here.':'No controller found yet. Connect one, or tap the buttons on screen instead.'}</p></div></div>
+    ${learnFm()?'<p class="lbox">Your <b>FM-1</b> is connected, so every sound in your track will come from it. Turn its volume up.</p>':''}
     <div class="ract"><button class="btn play" data-a="lnext">Let’s go (A)</button><span class="note">About 10 minutes. You can leave at any time and your song is saved.</span></div>`;
   if(st==='lvibe') return cardsHTML('Pick a vibe','This sets the style, the speed and the sounds. The beat you hear changes as you browse. BPM means beats per minute: higher is faster.')
     +learnTip(['LEFT','RIGHT','A'],'D-pad ◀ ▶ to hear each vibe, A to choose it. Or tap a card twice.');
@@ -4659,8 +4706,8 @@ function learnHTML(st){
       ${L.li===0?'<p class="lbox">Each idea is a <b>loop</b>: a short pattern, a couple of bars long, that repeats forever. Choose the one that makes you want to nod along.</p>':`<p class="lbox">You’ll hear each idea playing with the ${L.li===1?'drums':'layers'} you already picked, so you can tell what fits.</p>`}
       <div class="rcards">${L.cands.map((c,i)=>`<button class="rcard${i===L.sel?' sel':''}" data-a="lcard" data-k="${i}">
         <div class="rglyph pkg">${candSVG(c)}</div><h3>Idea ${i+1}</h3><p>${esc(c.name)}${c.desc?'. '+esc(c.desc):''}</p><div class="rtags">${i===L.sel?'<span>Playing now</span>':''}</div></button>`).join('')}</div>
-      <div class="ract"><button class="btn play" data-a="lkeep">Keep idea ${L.sel+1} (A)</button><button class="btn" data-a="lroll">Three new ideas (Y)</button></div>
-      ${learnTip(['LEFT','RIGHT','A','Y'],'D-pad ◀ ▶ to hear each idea, A to keep the one playing, Y for fresh ideas.')}`;}
+      <div class="ract"><button class="btn play" data-a="lkeep">Keep idea ${L.sel+1} (A)</button><button class="btn" data-a="lroll">Three new ideas (Y)</button><button class="btn" data-a="lsnd">Different sound (X)</button><span class="note">Sound: ${esc(learnSoundName(Ly.t))}</span></div>
+      ${learnTip(['LEFT','RIGHT','A','Y','X'],'D-pad ◀ ▶ to hear each idea, A to keep the one playing, Y for fresh ideas, X to try another sound.')}`;}
   if(st==='ljam'){
     const cell=(k,area)=>`<button class="ljk${L.jam[k]?' on':''}" style="grid-area:${area}" data-jam="${k}"><b>${FACES[k]}</b><small>${LEARN_JAM_NAME[k]}</small></button>`;
     return `<h2 class="rtitle">Your turn to play</h2>
@@ -4684,15 +4731,15 @@ function learnHTML(st){
         <dt>Layer</dt><dd>One part of the music: drums, bass, chords, melody. Ember Box calls them tracks and has six.</dd>
         <dt>Pattern A and B</dt><dd>Each track has a main loop and a variation, like the busier drums in your Full scene.</dd>
         <dt>Scene</dt><dd>A set of layers playing together. Switching scenes is how you perform.</dd>
-        <dt>Effects</dt><dd>The filter, echo and tape stop change the sound live without changing the notes.</dd></dl>
-      <p class="lbox">Your controls on stage: <b>hold R and press A, B, Y or X</b> for scenes 1 to 4. <b>Right stick</b> for the filter, <b>ZL</b> for a drum fill, <b>+</b> to start or stop.</p>
+        <dt>Effects</dt><dd>${S.tracks.some(t=>t.src==='fm1')?'The filter and beat repeat change how your track sounds live, without changing the notes.':'The filter, echo and tape stop change the sound live without changing the notes.'}</dd></dl>
+      <p class="lbox">Your controls on stage: <b>hold R and press A, B, Y or X</b> for scenes 1 to 4. <b>Right stick</b> left or right for the filter${S.tracks.some(t=>t.src==='fm1')?', up for a beat repeat':''}, <b>ZL</b> for a drum fill, <b>+</b> to start or stop.</p>
       <div class="ract"><button class="btn play" data-a="rdone" data-v="perform">Play it freely (A)</button><button class="btn" data-a="lquick">Make another with Quick Build (Y)</button></div>`;
   return '';
 }
 function learnPad(st,cur,pr,rl){
   if(st==='lwelcome'){if(pr('A')) learnNext(); return true;}
   if(st==='lvibe'){if(pr('LEFT')) runSelect(RUN.sel-1); if(pr('RIGHT')) runSelect(RUN.sel+1); if(pr('A')) learnPickVibe(); return true;}
-  if(st==='llayer'){if(pr('LEFT')) learnSel(RUN.ln.sel-1); if(pr('RIGHT')) learnSel(RUN.ln.sel+1); if(pr('A')) learnKeep(); else if(pr('Y')) learnReroll(); return true;}
+  if(st==='llayer'){if(pr('LEFT')) learnSel(RUN.ln.sel-1); if(pr('RIGHT')) learnSel(RUN.ln.sel+1); if(pr('A')) learnKeep(); else if(pr('Y')) learnReroll(); else if(pr('X')) learnSound(); return true;}
   if(st==='ljam'){FACES.forEach((n,k)=>{if(pr(n)) learnJamOn(k); if(rl(n)) learnJamOff(k);}); if(pr('PLUS')) learnNext(); return true;}
   if(st==='lscenes'){if(pr('LEFT')) learnScenePlay(RUN.ln.scene-1); if(pr('RIGHT')) learnScenePlay(RUN.ln.scene+1); if(pr('A')) learnNext(); return true;}
   if(st==='ldone'){if(pr('A')) runFinish('perform'); else if(pr('Y')){runFinish('perform');openQuick(false);} return true;}
