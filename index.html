@@ -2012,7 +2012,6 @@ document.addEventListener('click',e=>{
     case 'qsndok':qbSoundDone();break;
     case 'qsndroll':qbRerollSounds();break;
     case 'qforge':qbForge();break;
-    case 'qsrc':qbSetSrc(b.dataset.m);break;
     case 'pkcard':{const k=+b.dataset.k;if(k===RUN.pk.sel) pkUse(); else pkSelect(k);break;}
     case 'pkuse':pkUse();break;
     case 'pkroll':pkReroll();break;
@@ -2486,7 +2485,7 @@ function buildRunProject(cls){
     scenes:[[0,-1,-1,-1,-1,-1],[0,-1,-1,-1,-1,-1],[0,-1,-1,-1,-1,-1],[0,-1,-1,-1,-1,-1]]});
   S.tracks.forEach((t,i)=>{t.slot=i===0?0:-1;t.editSlot=0;});
   R.pending=[{},{},{},{},{},{}]; R.pendingScene=null; R.lastScene=-1;
-  for(let i=0;i<6;i++) updateBus(i); updateEcho(); syncHeader(); saveSoon();
+  for(let i=0;i<6;i++) updateBus(i); updateEcho(); syncHeader(); fm1AllTracks(); saveSoon();
 }
 function runSelect(i){RUN.sel=(i+RUN.cards.length)%RUN.cards.length;document.querySelectorAll('.rcard').forEach(el=>el.classList.toggle('sel',+el.dataset.k===RUN.sel));
   const b=$('#runpick'); if(b) b.textContent='Choose '+RUN.cards[RUN.sel].title;
@@ -2928,7 +2927,6 @@ function runPad(now){
   if((st==='qsound'||st==='pick')&&pr('ZR')){R.duck=R.duck<1?1:.4;refreshMix();return;}
   if(st==='qsound'){const n=RUN.qb.sounds.length;
     if(pr('LEFT')){qbApplySound((RUN.qb.ssel+n-1)%n);renderRun();} if(pr('RIGHT')){qbApplySound((RUN.qb.ssel+1)%n);renderRun();}
-    if((pr('UP')||pr('DOWN'))&&fm1Ready()&&FM1_ROLE[RUN.qb.i]){qbSrcStep(cur.DOWN?1:-1);return;}
     if(pr('A')) qbSoundDone(); else if(pr('Y')) qbRerollSounds(); else if(pr('X')) qbForge(); return;}
   if(st==='pick'){const P=RUN.pk;
     if(pr('LEFT')) pkSelect(P.sel-1); if(pr('RIGHT')) pkSelect(P.sel+1);
@@ -3210,7 +3208,7 @@ function buildQuickProject(g){
   R.pending=[{},{},{},{},{},{}]; R.pendingScene=null; R.lastScene=-1;
   for(let i=0;i<6;i++) updateBus(i); updateEcho(); syncHeader(); updateSongLabel(); saveSoon();
 }
-function qbPickGenre(){const c=RUN.cards[RUN.sel];RUN.genre=QGENRES.find(g=>g.k===c.id);RUN.qb={g:c.id,phase:'set',i:0};buildQuickProject(RUN.genre);renderRun();qbHear();}
+function qbPickGenre(){const c=RUN.cards[RUN.sel];RUN.genre=QGENRES.find(g=>g.k===c.id);RUN.qb={g:c.id,phase:'set',i:0};buildQuickProject(RUN.genre);fm1AllTracks();renderRun();setTimeout(qbHear,FM1.out?400:0);}
 function qbHear(){
   if(!ctx) return; const now=ctx.currentTime+.05, gap=.7; let prev=null;
   progOf().forEach((r,i)=>{const v=voiceChord(r,prev,false);prev=v;v.forEach(d=>piano(degToMidi(d,3),now+i*gap,gap*.95,.4));piano(degToMidi(r,2),now+i*gap,gap*.95,.35);});
@@ -3229,10 +3227,10 @@ function qbTrack(i){
   if(i===0||i===1){const pool=shuffle(Object.keys(KITS)).sort((a,b)=>(g.kits.includes(b)?1:0)-(g.kits.includes(a)?1:0)).slice(0,3);
     RUN.qb.sounds=pool.map(k=>({id:k,title:k+' kit',desc:KITS[k].d,kit:true}));}
   else{const pool=({2:g.bass,3:g.chords,4:g.leads,5:g.pads})[i];RUN.qb.sounds=shuffle(pool).slice(0,3).map(n=>({id:n,title:n,desc:soundInfo(n)}));}
-  /* FM-1 plugged in: mix its sounds in, or show only them */
-  const src=qbSrc(), fm=src==='ember'?[]:fm1Pool(i,src==='fm1'?3:2);
-  if(fm.length){const own=RUN.qb.sounds.slice(0,3-fm.length);
-    RUN.qb.sounds=shuffle(own.concat(fm.map(x=>({id:fm1Id(x),title:x.name,desc:soundInfo(fm1Id(x)),fm1:true}))));}
+  /* FM-1 plugged in: only its sounds */
+  if(FM1.out){const fm=fm1Pool(i,3);
+    RUN.qb.sounds=fm.length?fm.map(x=>({id:fm1Id(x),title:x.name,desc:soundInfo(fm1Id(x)),fm1:true}))
+      :[{id:'fm1own',title:'FM-1 track '+(i+1),desc:FM1.sysex?'Plays whatever sound this FM-1 track has now.':'Plays whatever sound this FM-1 track has now. To choose from all FM-1 sounds, allow the sound list: Menu, FM-1.',fm1:true}];}
   RUN.qb.preview=genA(i)[0]; writeCand({track:i,slot:0},RUN.qb.preview); RUN.qb.ssel=0; qbApplySound(0);
   if(!R.playing) startPlay();
   RUN.step='qsound'; renderRun();
@@ -3241,10 +3239,6 @@ function qbApplySound(k){
   const i=RUN.qb.i, s=RUN.qb.sounds[k], t=S.tracks[i]; RUN.qb.ssel=k;
   useSound(i,s.id); if(i===1) W.snd[1]=s.id;
 }
-const KEY_QBSRC='emberbox.qbsrc.v1', QB_SRCS=[['mix','Mix'],['ember','Ember Box'],['fm1','FM-1']];
-function qbSrc(){if(!fm1Ready()) return 'ember'; const v=store.get(KEY_QBSRC); return QB_SRCS.some(x=>x[0]===v)?v:'mix';}
-function qbSetSrc(v){store.set(KEY_QBSRC,v); toast(v==='fm1'?'FM-1 sounds only':v==='ember'?'Ember Box sounds only':'Ember Box and FM-1 sounds'); qbTrack(RUN.qb.i);}
-function qbSrcStep(d){const k=QB_SRCS.findIndex(x=>x[0]===qbSrc()); qbSetSrc(QB_SRCS[(k+d+QB_SRCS.length)%QB_SRCS.length][0]);}
 function qbRerollSounds(){const i=RUN.qb.i;qbTrack(i);}
 function qbSoundDone(){
   const i=RUN.qb.i;
@@ -3276,8 +3270,8 @@ function qvibeHTML(){
     <div class="ract"><button class="btn" data-a="qhear">Hear it (X)</button><button class="btn play" data-a="qgo">Start building (A)</button></div>`;
 }
 function qsoundHTML(){
-  const i=RUN.qb.i, ss=RUN.qb.sounds, cur=ss[RUN.qb.ssel], src=qbSrc();
-  const seg=fm1Ready()&&FM1_ROLE[i]?`<div class="srcseg"><span class="note">Sounds from</span>${QB_SRCS.map(([k,l])=>`<button class="vchip${k===src?' on':''}" data-a="qsrc" data-m="${k}">${l}</button>`).join('')}<span class="note">D-pad ▲ ▼</span></div>`:'';
+  const i=RUN.qb.i, ss=RUN.qb.sounds, cur=ss[RUN.qb.ssel];
+  const seg=FM1.out?'<p class="note">Your FM-1 is connected, so every sound comes from it.</p>':'';
   const fmNote=cur&&cur.fm1&&!FM1.out?'<p class="note">The FM-1 is unplugged, so an Ember sound stands in until you plug it back in.</p>':'';
   return `<h2 class="rtitle">${ROLE[i]}: pick a sound</h2><p class="rsub">Track ${i+1} of 6. A sample pattern is playing so you can hear each sound in the mix.${cur&&cur.fm1?' FM-1 sounds play on FM-1 track '+(i+1)+'.':''}</p>${seg}${fmNote}
     <div class="rcards">${ss.map((s,k)=>`<button class="rcard${k===RUN.qb.ssel?' sel':''}" data-a="qsnd" data-k="${k}"><div class="rglyph">${s.fm1?'FM<small>FM-1</small>':s.kit?'<small>KIT</small>':ampGlyph(s.id)}</div><h3>${esc(s.title)}</h3><p>${esc(s.desc||'')}</p><div class="rtags">${k===RUN.qb.ssel?'<span>Playing now</span>':''}</div></button>`).join('')}</div>
@@ -3514,7 +3508,7 @@ function enterRoom(type,returning){
     pool.forEach((n,i)=>put(String(i+1),{t:'altar',v:n}));}
   if(type==='ruins') shuffle(cls.breaks).slice(0,3).forEach((b,i)=>put(String(i+1),{t:'totem',v:b}));
   /* with the FM-1 plugged in, the last spirit in each sound room is one of its sounds */
-  const withFm=(ti,list,n)=>{const f=fm1Pool(ti,1);return f.length?list.slice(0,n-1).concat([fm1Id(f[0])]):list.slice(0,n);};
+  const withFm=(ti,list,n)=>{const f=fm1Pool(ti,n);return f.length?f.map(fm1Id):list.slice(0,n);};
   if(type==='jungle') withFm(1,shuffle(Object.keys(KITS)),3).forEach((k,i)=>put(String(i+1),{t:'kit',v:k,track:1}));
   if(fl&&fl!=='perc'){const pool={bass:cls.bass,chords:cls.chords,hook:cls.leads,pad:cls.pads}[fl];
     withFm(FLOOR_TRACK[fl],shuffle(pool),3).forEach((b,i)=>put(String(i+1),{t:'spirit',v:b,track:FLOOR_TRACK[fl]}));}
@@ -3567,7 +3561,7 @@ function interact(){
 function openDoors(){if(!W.doorsOpen){W.doorsOpen=true;rumble(.5,80);}}
 const PIANO={name:'Piano',alg:1,ratios:[1,1,1,4],levels:[.75,.3,.55,.12],amp:[.002,1.4,.12,.5],mod:[.001,.45,0,.35],cut:5200,res:.4,fenv:0,spread:2,mono:false,glide:0,bright:1};
 function prevBus(){if(!A.prevBus){A.prevBus=ctx.createGain();A.prevBus.gain.value=.9;A.prevBus.connect(A.mix);}return A.prevBus;}
-function piano(midi,time,dur,vel){if(!ctx)return;buildVoice(PIANO,440*Math.pow(2,(midi-69)/12),null,time,dur,vel,prevBus());}
+function piano(midi,time,dur,vel){if(!ctx)return;if(FM1.out&&S.tracks[3]&&S.tracks[3].src==='fm1'){fm1Send(3,midi,time,dur,vel);return;}buildVoice(PIANO,440*Math.pow(2,(midi-69)/12),null,time,dur,vel,prevBus());}
 function duckDrums(sec){if(!ctx)return;A.bus[0].vol.gain.setTargetAtTime(busLevel(0)*.25,ctx.currentTime,.05);clearTimeout(W.duckT);W.duckT=setTimeout(()=>updateBus(0),sec*1000);}
 function homeKey(){return W.found&&W.found.key!==null&&W.found.key!==undefined?W.found.key:S.key;}
 function scaleNotes(name){const k=homeKey();return SCALES[name].map(v=>NOTE_NAMES[(k+v)%12]).join(' ');}
@@ -4356,9 +4350,10 @@ function fm1Pool(i,n){
   const ok=FM1.list.filter(x=>FM1_ROLE[i].includes(x.type)&&fm1Usable(i,x)&&(i>1||x.e===10||x.e===14));
   return shuffle(ok).slice(0,n);
 }
-/* put a sound on a track: an Ember preset or kit name, or an FM-1 sound id */
+/* put a sound on a track: an Ember preset or kit name, an FM-1 sound id, or 'fm1own' (the FM-1 track's current sound) */
 function useSound(i,v){
   const t=S.tracks[i];
+  if(v==='fm1own'){if(t.src!=='fm1'&&R.voices[i]&&ctx) R.voices[i].forEach(o=>o.cut(ctx.currentTime)); t.src='fm1'; saveSoon(); return;}
   if(isFm1(v)){
     const x=fm1Parse(v);
     if(t.src!=='fm1'&&R.voices[i]&&ctx) R.voices[i].forEach(o=>o.cut(ctx.currentTime));
@@ -4373,8 +4368,8 @@ function useSound(i,v){
 }
 /* what a track is playing, for labels */
 function trackSnd(t){
-  if(t.type==='break') return BREAKS[(t.data['break'][0]||{}).brk||'amen'].name;
-  if(t.src==='fm1'&&t.fm1) return t.fm1.name+' (FM-1)';
+  if(t.type==='break') return BREAKS[(t.data['break'][0]||{}).brk||'amen'].name+(t.src==='fm1'&&t.fm1?', '+t.fm1.name+' (FM-1)':'');
+  if(t.src==='fm1') return t.fm1?t.fm1.name+' (FM-1)':'FM-1 track '+(S.tracks.indexOf(t)+1);
   return t.type==='drums'?'kit '+(isFm1(W.snd[1])?'standard':(W.snd[1]||'standard')):t.preset;
 }
 /* the master filter can't reach the FM-1's audio, so it moves each FM-1 track's Brightness (CC 74) instead */
@@ -4551,8 +4546,10 @@ function learnVibePreview(){
 }
 /* FM-1 plugged in: every track plays on it, each with a sound that suits the layer */
 const learnFm=()=>!!FM1.out;
-function learnFmSounds(){
-  if(!learnFm()) return;
+function learnFmSounds(){fm1AllTracks();}
+/* FM-1 plugged in: every track of a new song plays on it, with a sound that suits each track */
+function fm1AllTracks(){
+  if(!FM1.out) return;
   for(let i=0;i<6;i++){
     const x=fm1Pool(i,1)[0], t=S.tracks[i];
     if(x) useSound(i,fm1Id(x));
